@@ -10,6 +10,11 @@ from segment_anything_hq import sam_model_registry, SamPredictor
 import asyncio
 import uuid
 from datetime import datetime, timedelta
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -36,6 +41,7 @@ TTL = timedelta(minutes=8)  # Time-to-live for images
 
 class Points(BaseModel):
     points: list[list[float]]
+    image_id: str
 
 def preprocess_image(image):
     image_np = np.array(image)
@@ -56,7 +62,7 @@ async def run_image_prediction(image_np, predictor, points, point_labels):
         try:
             predictor.set_image(image_np)
         except NotImplementedError as e:
-            print(f"Error in set_image: {e}")
+            logger.error(f"Error in set_image: {e}")
             return None
 
         try:
@@ -65,10 +71,10 @@ async def run_image_prediction(image_np, predictor, points, point_labels):
                 point_labels=point_labels
             )
         except AssertionError as e:
-            print(f"AssertionError during predict: {e}")
+            logger.error(f"AssertionError during predict: {e}")
             return None
         except Exception as e:
-            print(f"Unexpected error during predict: {e}")
+            logger.error(f"Unexpected error during predict: {e}")
             return None
 
     return masks[0]
@@ -92,31 +98,38 @@ async def upload_image(image: UploadFile = File(...)):
     image_id = str(uuid.uuid4())
     images[image_id] = {"image": image_np, "timestamp": datetime.utcnow()}
 
+    logger.info(f"Image uploaded successfully: {image_id}")
+
     return JSONResponse(content={"message": "Image uploaded successfully", "image_id": image_id})
 
 @app.post("/predict")
-async def predict(points: Points, image_id: str):
+async def predict(data: Points):
+    image_id = data.image_id
+    points = data.points
+
     if image_id not in images:
         raise HTTPException(status_code=400, detail="Invalid image ID")
 
     image_data = images[image_id]
     image_np = image_data["image"]
 
-    if not points.points:
+    if not points:
         raise HTTPException(status_code=400, detail="No points provided")
 
-    if not all(isinstance(pt, list) and len(pt) == 2 for pt in points.points):
+    if not all(isinstance(pt, list) and len(pt) == 2 for pt in points):
         raise HTTPException(status_code=400, detail="Invalid points format")
 
-    point_labels = [1] * len(points.points)
+    point_labels = [1] * len(points)
 
-    mask = await run_image_prediction(image_np, predictor, points.points, point_labels)
+    mask = await run_image_prediction(image_np, predictor, points, point_labels)
 
     if mask is None:
         raise HTTPException(status_code=500, detail="Prediction failed")
 
     mask_binary = (mask > 0).astype(int)
     mask_list = mask_binary.tolist()
+
+    logger.info(f"Prediction successful for image ID: {image_id}")
 
     return JSONResponse(content={"mask": mask_list})
 
@@ -130,6 +143,7 @@ async def cleanup_expired_images():
         expired_keys = [key for key, value in images.items() if now - value["timestamp"] > TTL]
         for key in expired_keys:
             del images[key]
+            logger.info(f"Image removed due to TTL expiration: {key}")
         await asyncio.sleep(60)  # Run cleanup every 60 seconds
 
 if __name__ == "__main__":
