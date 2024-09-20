@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAM HQ Image Mask Prediction</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        #image-container {
+            position: relative;
+        }
+        #uploaded-image {
+            max-width: 100%;
+            cursor: crosshair;
+        }
+        #mask-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+        #clear-button {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>SAM HQ Image Mask Prediction</h1>
+    <input type="file" id="image-input" accept="image/*">
+    <div id="image-container">
+        <img id="uploaded-image" src="" alt="Uploaded Image">
+        <canvas id="mask-overlay"></canvas>
+    </div>
+    <button id="clear-button">Clear</button>
+    <script>
+        const imageInput = document.getElementById('image-input');
+        const uploadedImage = document.getElementById('uploaded-image');
+        const maskOverlay = document.getElementById('mask-overlay');
+        const clearButton = document.getElementById('clear-button');
+        let imageFile = null;
+        let points = [];
+
+        imageInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                imageFile = file;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    uploadedImage.src = e.target.result;
+                    uploadedImage.onload = () => {
+                        maskOverlay.width = uploadedImage.width;
+                        maskOverlay.height = uploadedImage.height;
+                        uploadImage(file);
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        uploadedImage.addEventListener('click', (event) => {
+            if (!imageFile) return;
+
+            const rect = uploadedImage.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+
+            points.push([Math.round(x), Math.round(y)]);
+            getMask(points);
+        });
+
+        clearButton.addEventListener('click', () => {
+            points = [];
+            const ctx = maskOverlay.getContext('2d');
+            ctx.clearRect(0, 0, maskOverlay.width, maskOverlay.height);
+        });
+
+        function uploadImage(file) {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            fetch('http://127.0.0.1:5000/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    console.log(data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred');
+            });
+        }
+
+        function getMask(points) {
+            fetch('http://127.0.0.1:5000/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ points: points })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.mask) {
+                    drawMask(data.mask);
+                } else {
+                    alert('Prediction failed');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred');
+            });
+        }
+
+        function drawMask(mask) {
+            const ctx = maskOverlay.getContext('2d');
+            ctx.clearRect(0, 0, maskOverlay.width, maskOverlay.height); // Clear previous mask
+            const imageData = ctx.createImageData(maskOverlay.width, maskOverlay.height);
+            for (let i = 0; i < mask.length; i++) {
+                for (let j = 0; j < mask[i].length; j++) {
+                    const index = (i * mask[i].length + j) * 4;
+                    const value = mask[i][j] * 255;
+                    imageData.data[index] = 255; // Red
+                    imageData.data[index + 1] = 0; // Green
+                    imageData.data[index + 2] = 0; // Blue
+                    imageData.data[index + 3] = value; // Alpha
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+    </script>
+</body>
+</html>
