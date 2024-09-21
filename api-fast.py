@@ -32,7 +32,8 @@ predictor = None
 # Load the model once at startup
 checkpoint_path = "./pretrained_checkpoint/sam_hq_vit_l.pth"
 model_type = "vit_l"
-sam = sam_model_registry[model_type](checkpoint=checkpoint_path)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+sam = sam_model_registry[model_type](checkpoint=checkpoint_path).to(device)
 predictor = SamPredictor(sam)
 
 # Dictionary to store images by UUID with timestamps
@@ -50,7 +51,7 @@ def preprocess_image(image):
         raise ValueError("Image must have 3 channels (RGB).")
 
     image_np = image_np.astype(np.float32) / 255.0
-    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float()
+    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float().to(device)
 
     return image_tensor
 
